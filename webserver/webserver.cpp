@@ -13,6 +13,7 @@ webserver::webserver(){
     m_root = "/home/jym/webserver/resources";
 
     users_timer = new client_data[MAX_FD];
+    m_heap_timer_ptr = new HeapTimer();
 }
 
 webserver::~webserver(){
@@ -20,12 +21,13 @@ webserver::~webserver(){
     close(m_listenfd);
     close(m_pipefd[1]);
     close(m_pipefd[0]);
+    delete m_heap_timer_ptr;
     delete [] users;
     delete [] users_timer;
     delete m_pool;
 }
 
-void webserver::init(int port, string user, string passwd, string dbname, int log_write, int opt_linger, int trigmode, int sql_num, int thread_num, int close_log, int actor_model){
+void webserver::init(int port, string user, string passwd, string dbname, int log_write, int opt_linger, int trigmode, int sql_num, int thread_num, int close_log, int actor_model, bool heaptimer){
     m_port = port;
     m_user = user;
     m_passwd = passwd;
@@ -37,6 +39,7 @@ void webserver::init(int port, string user, string passwd, string dbname, int lo
     m_trigmode = trigmode;
     m_close_log = close_log;
     m_actormodel = actor_model;
+    m_heap_timer = heaptimer;
 }
 
 void webserver::trig_mode(){
@@ -143,24 +146,36 @@ void webserver::eventListen(){
 
 void webserver::timer(int connfd, struct sockaddr_in client_address){
     users[connfd].init(connfd, client_address, m_root, m_conntrigmode, m_close_log, m_user, m_passwd, m_dbname);
+    if(!m_heap_timer){
+        users_timer[connfd].address = client_address;
+        users_timer[connfd].sockfd = connfd;
 
-    users_timer[connfd].address = client_address;
-    users_timer[connfd].sockfd = connfd;
+        util_timer *timer = new util_timer;
+        timer->user_data = &users_timer[connfd];
+        timer->cb_func = cb_func;
+        time_t cur = time(NULL);
+        timer->expire = cur + 3 * TIMESLOT;
 
-    util_timer *timer = new util_timer;
-    timer->user_data = &users_timer[connfd];
-    timer->cb_func = cb_func;
-    time_t cur = time(NULL);
-    timer->expire = cur + 3 * TIMESLOT;
-
-    users_timer[connfd].timer = timer;
-    utils.m_timer_lst.add_timer(timer);
+        users_timer[connfd].timer = timer;
+        utils.m_timer_lst.add_timer(timer);
+    }
+    else{
+        m_heap_timer_ptr->add_timer(connfd, time(NULL) + 3 * TIMESLOT, cb_func_heap);
+    }
 }
 
 void webserver::adjust_timer(util_timer *timer){
     time_t cur = time(NULL);
     timer->expire = cur + 3 * TIMESLOT;
-    utils.m_timer_lst.adjust_timer(timer);
+    utils.m_timer_lst.adjust_timer(timer->fd);
+
+    LOG_INFO("%s", "adjust timer once");
+}
+
+void webserver::adjust_timer(TimerNode *timer){
+    time_t cur = time(NULL);
+    timer->expires = cur + 3 * TIMESLOT;
+    m_heap_timer_ptr->adjust_timer(timer->fd, timer->expires);
 
     LOG_INFO("%s", "adjust timer once");
 }
@@ -172,6 +187,14 @@ void webserver::deal_timer(util_timer *timer, int sockfd){
     }
 
     LOG_INFO("close fd %d", users_timer[sockfd].sockfd);
+}
+
+void webserver::deal_timer(TimerNode *timer, int sockfd){
+    if(timer){
+        m_heap_timer_ptr->dowork(sockfd);
+    }
+
+    LOG_INFO("close fd %d", timer->fd);
 }
 
 bool webserver::dealclientdata(){
@@ -190,8 +213,8 @@ bool webserver::dealclientdata(){
             LOG_ERROR("%s", "Internal server busy");
             return false;
         }
-
         timer(connfd, client_address);
+        
     }
 
     else{
@@ -245,7 +268,16 @@ bool webserver::dealwithsignal(bool &timeout, bool &stop_server){
 
 
 void webserver::dealwithread(int sockfd){
-    util_timer *timer = users_timer[sockfd].timer;
+    if(m_heap_timer){
+        TimerNode *timer = m_heap_timer_ptr->get_timer(sockfd);
+
+    }
+    else{
+        util_timer *timer = users_timer[sockfd].timer;
+    }
+
+    // util_timer *timer = users_timer[sockfd].timer;
+
     if(m_actormodel == 1){
         if(timer){
             adjust_timer(timer);
@@ -281,7 +313,13 @@ void webserver::dealwithread(int sockfd){
 
 
 void webserver::dealwithwrite(int sockfd){
-    util_timer *timer = users_timer[sockfd].timer;
+    if(m_heap_timer){
+        TimerNode *timer = m_heap_timer_ptr->get_timer(sockfd);
+    }
+    else{
+        util_timer *timer = users_timer[sockfd].timer;
+    }
+    
     //reactor
     if(m_actormodel == 1){
         if(timer){
@@ -338,7 +376,13 @@ void webserver::eventLoop(){
                 }
             }
             else if(events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)){
-                util_timer *timer = users_timer[sockfd].timer;
+                if(m_heap_timer){
+                    TimerNode *timer = m_heap_timer_ptr->get_timer(sockfd);
+                }
+                else{
+                    util_timer *timer = users_timer[sockfd].timer;
+                }
+                
                 deal_timer(timer, sockfd);
             }
             else if((sockfd == m_pipefd[0]) && (events[i].events & EPOLLIN)){
@@ -357,8 +401,14 @@ void webserver::eventLoop(){
         }
 
         if(timeout){
-            utils.timer_handler();
-
+            if(m_heap_timer){
+                m_heap_timer_ptr->tick();
+                alarm(TIMESLOT);
+            }
+            else{
+                utils.timer_handler();
+            }
+        
             LOG_INFO("%s", "timer tick");
             timeout = false;
         }

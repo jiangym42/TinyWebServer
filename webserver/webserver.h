@@ -24,7 +24,7 @@ public:
     webserver();
     ~webserver();
 
-    void init(int port, string user, string passwd, string dbname, int logwrite, int opt_linger, int trigmode, int sql_num, int thread_num, int close_log, int actor_model);
+    void init(int port, string user, string passwd, string dbname, int logwrite, int opt_linger, int trigmode, int sql_num, int thread_num, int close_log, int actor_model, bool heaptimer);
     void thread_pool();
     void sql_pool();
     void log_write();
@@ -32,8 +32,13 @@ public:
     void eventListen();
     void eventLoop();
     void timer(int connfd, struct sockaddr_in client_address);
+    
     void adjust_timer(util_timer *timer);
+    void adjust_timer(TimerNode *timer);
+
+    void deal_timer(TimerNode *timer, int sockfd);
     void deal_timer(util_timer *timer, int sockfd);
+    
     bool dealclientdata();
     bool dealwithsignal(bool& timeout, bool& stop_server);
     void dealwithread(int sockfd);
@@ -67,6 +72,10 @@ public:
     int m_conntrigmode;
 
     client_data *users_timer;
+    HeapTimer *m_heap_timer_ptr;
+
+    bool m_heap_timer;
+
     Utils utils;
 };
 

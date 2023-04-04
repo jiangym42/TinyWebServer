@@ -24,6 +24,7 @@
 
 #include "../log/log.h"
 #include "../http_conn/http_conn.h"
+#include "heaptimer.h"
 
 class util_timer;
 

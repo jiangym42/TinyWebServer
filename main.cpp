@@ -289,7 +289,7 @@ int main(int argc, char *argv[]){
 
     webserver server;
 
-    server.init(config.port, user, passwd, dbname, config.logwrite, config.opt_linger, config.trigmode, config.sql_num, config.thread_num, config.close_log, config.actor_model);
+    server.init(config.port, user, passwd, dbname, config.logwrite, config.opt_linger, config.trigmode, config.sql_num, config.thread_num, config.close_log, config.actor_model, true);
 
     server.log_write();
 
